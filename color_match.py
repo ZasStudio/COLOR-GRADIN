@@ -44,7 +44,7 @@ def sample_frames(path, n, max_side=480):
         img = cv2.imread(path, cv2.IMREAD_COLOR)
         if img is None:
             sys.exit(f"No se pudo leer la imagen: {path}")
-        return [_prep(img, max_side)]
+        return clean_frames([_prep(img, max_side)])
 
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
@@ -72,7 +72,31 @@ def sample_frames(path, n, max_side=480):
     cap.release()
     if not frames:
         sys.exit(f"No se pudieron leer fotogramas de: {path}")
-    return frames
+    return clean_frames(frames)
+
+
+def clean_frames(frames):
+    """Quita barras negras (letterbox/pillarbox) y fotogramas casi negros
+    (fundidos, placas de título) para que no contaminen el análisis."""
+    lum = [f.mean(2) for f in frames]
+    # Descarta fotogramas prácticamente negros.
+    keep = [i for i, l in enumerate(lum) if np.percentile(l, 90) > 0.08]
+    if not keep:
+        return frames
+    frames = [frames[i] for i in keep]
+    lum = [lum[i] for i in keep]
+    # Una fila/columna es barra si está negra en TODOS los fotogramas.
+    row_max = np.max([np.percentile(l, 98, axis=1) for l in lum], axis=0)
+    col_max = np.max([np.percentile(l, 98, axis=0) for l in lum], axis=0)
+    rows = np.where(row_max > 0.04)[0]
+    cols = np.where(col_max > 0.04)[0]
+    if len(rows) < 16 or len(cols) < 16:
+        return frames
+    # Margen extra para no incluir bordes redondeados o suavizados de las barras.
+    pr, pc = max(2, len(rows) // 50), max(2, len(cols) // 50)
+    r0, r1 = rows[0] + pr, rows[-1] + 1 - pr
+    c0, c1 = cols[0] + pc, cols[-1] + 1 - pc
+    return [f[r0:r1, c0:c1] for f in frames]
 
 
 def _prep(bgr, max_side):
@@ -338,7 +362,7 @@ def main():
     if not a.solo_lut:
         if os.path.splitext(a.video)[1].lower() in IMAGE_EXTS:
             out_img = os.path.join(a.out, f"{name}_graded.png")
-            img = sample_frames(a.video, 1, max_side=100000)[0]
+            img = cv2.cvtColor(cv2.imread(a.video, cv2.IMREAD_COLOR), cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
             cv2.imwrite(out_img, _to_bgr8(grade.apply_rgb(img, a.strength)))
             print(f"Imagen: {out_img}")
         else:
