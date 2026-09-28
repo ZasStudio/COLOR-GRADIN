@@ -92,6 +92,9 @@ def clean_frames(frames):
     cols = np.where(col_max > 0.04)[0]
     if len(rows) < 16 or len(cols) < 16:
         return frames
+    h, w = frames[0].shape[:2]
+    if rows[0] == 0 and rows[-1] == h - 1 and cols[0] == 0 and cols[-1] == w - 1:
+        return frames  # sin barras
     # Margen extra para no incluir bordes redondeados o suavizados de las barras.
     pr, pc = max(2, len(rows) // 50), max(2, len(cols) // 50)
     r0, r1 = rows[0] + pr, rows[-1] + 1 - pr
