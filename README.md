@@ -40,6 +40,7 @@ Se genera en `salida/`:
 |---|---|
 | `-s 0.7` | Intensidad del grade (0 a 1) |
 | `--sin-mascaras-color` | Usa sólo las máscaras de sombras, medios y altas luces |
+| `--capas` | Exporta además un LUT por capa (color y luz de sombras, medios y altas luces) para montarlo con capas de ajuste en Premiere o Resolve |
 | `--solo-lut` | Genera sólo el LUT y las previews, sin renderizar el video |
 | `--frames 40` | Fotogramas que se analizan de cada clip (por defecto 24) |
 | `--lut-size 33` | Resolución del LUT: 17, 33 o 65 (por defecto 65) |

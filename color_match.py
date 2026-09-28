@@ -253,19 +253,57 @@ class MaskGrade:
         lab = rgb_to_lab(rgb.reshape(-1, 3))
         return lab_to_rgb(self.apply_lab(lab, strength)).reshape(shape)
 
+    def layers(self):
+        """Descompone el grade en capas independientes para apilarlas en un editor
+        (de abajo hacia arriba). Devuelve [(nombre, función lab->lab)].
+
+        Primero van las capas de color de cada zona: no tocan la luminancia, así que
+        las máscaras de las siguientes capas se calculan igual que en el grade
+        completo. Después las de luz y, al final, las máscaras de color."""
+        out = []
+
+        def zone_layer(zone, channels):
+            def fn(lab):
+                w = luma_masks(lab)[zone]
+                d = transfer(lab, self.luma_tgt[zone], self.luma_ref[zone]) - lab
+                d[:, [c for c in range(3) if c not in channels]] = 0
+                return lab + d * w[:, None]
+            return fn
+
+        def color_layer(k):
+            def fn(lab):
+                w = color_masks(lab)[k]
+                d = transfer(lab, self.color_tgt[k], self.color_ref[k], (0.5, 1.0, 1.0)) - lab
+                return lab + d * w[:, None]
+            return fn
+
+        active = [k for k in LUMA_MASKS if self.luma_ref[k] is not None]
+        for k in active:
+            out.append((f"{k}_color", zone_layer(k, (1, 2))))
+        for k in active:
+            out.append((f"{k}_luz", zone_layer(k, (0,))))
+        for k in self.color_ref:
+            out.append((f"mascara_{k}", color_layer(k)))
+        return out
+
 
 # ----------------------------------------------------------------------------
 # Salidas: LUT, video, previsualizaciones
 # ----------------------------------------------------------------------------
 
 def write_cube(grade, path, size, strength):
+    write_cube_fn(lambda rgb: grade.apply_rgb(rgb, strength), path, size)
+
+
+def write_cube_fn(fn, path, size, title="color_match por mascaras"):
+    """Hornea una función RGB->RGB (arrays (N,3) en [0,1]) en un LUT .cube."""
     g = np.linspace(0.0, 1.0, size, dtype=np.float32)
     # Orden .cube: R varía más rápido, luego G, luego B.
     b, gg, r = np.meshgrid(g, g, g, indexing="ij")
     rgb = np.stack([r.ravel(), gg.ravel(), b.ravel()], axis=1)
-    out = grade.apply_rgb(rgb, strength)
+    out = fn(rgb)
     with open(path, "w") as f:
-        f.write('TITLE "color_match por mascaras"\n')
+        f.write(f'TITLE "{title}"\n')
         f.write(f"LUT_3D_SIZE {size}\n")
         f.write("DOMAIN_MIN 0.0 0.0 0.0\nDOMAIN_MAX 1.0 1.0 1.0\n")
         for v in out:
@@ -343,6 +381,8 @@ def main():
     p.add_argument("--sin-mascaras-color", action="store_true", help="Usar sólo las máscaras de luminancia")
     p.add_argument("--solo-lut", action="store_true", help="No renderizar el video, sólo LUT y previews")
     p.add_argument("--crf", type=int, default=16, help="Calidad x264 (menor = mejor, por defecto 16)")
+    p.add_argument("--capas", action="store_true",
+                   help="Exportar también un LUT por capa (sombras/medios/luces, color y luz) para Premiere/Resolve")
     a = p.parse_args()
 
     os.makedirs(a.out, exist_ok=True)
@@ -358,6 +398,14 @@ def main():
     lut_path = os.path.join(a.out, f"{name}_grade.cube")
     write_cube(grade, lut_path, a.lut_size, a.strength)
     print(f"LUT: {lut_path}")
+
+    if a.capas:
+        capas_dir = os.path.join(a.out, "capas")
+        os.makedirs(capas_dir, exist_ok=True)
+        for i, (lname, fn) in enumerate(grade.layers(), 1):
+            path = os.path.join(capas_dir, f"{i:02d}_{lname}.cube")
+            write_cube_fn(lambda rgb, fn=fn: lab_to_rgb(fn(rgb_to_lab(rgb))), path, 33, lname)
+            print(f"Capa {i:02d}: {path}")
 
     save_previews(grade, ref_frames[len(ref_frames) // 2], tgt_frames[len(tgt_frames) // 2], a.out, a.strength)
     print(f"Previews: {os.path.join(a.out, 'comparacion.jpg')}, {os.path.join(a.out, 'mascaras.jpg')}")
